@@ -31,7 +31,7 @@ One of the Millennium Development Goals (2000-2015) was to halve the population 
   ### Execute Analysis
   To execute the analysis, from the `AfricaDHSWASH` directory, run the following
   ``` bash
-  Rscript -e "rmarkdown::render('Final_Proj_Doc.Rmd', output_file = 'Output/SpatialReport.html', quiet = TRUE)"
+  Rscript -e "rmarkdown::render('FInal_Proj_Doc.Rmd', output_file = 'Output/SpatialReport.html', quiet = TRUE)"
   ```
   This will create in the `AfricaDHSWASH/Output` directory, a file called `SpatialReport.html` which contains a report of the findings.
   Please note that this process may take about 10 minutes.
