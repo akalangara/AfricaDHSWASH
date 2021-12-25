@@ -1,0 +1,15 @@
+SDRID,Definition,Data Restriction,DHSID,Alias
+HCAGONHLND,Percentage of households owning agricultural land,,HC_AGON_H_LND,Households owning agricultural land
+HCCHARHNUM,Number of households,,HC_CHAR_H_NUM,Number of households
+HCCHARPNUM,Number of persons,,HC_CHAR_P_NUM,Number of persons
+HCWIXQPLOW,Percentage of the de jure population in the lowest wealth quintile,,HC_WIXQ_P_LOW,Population in the lowest wealth quintile
+WSSRCEHBAS,"Percentage of households with basic water service, defined as an improved water source with either water on the premises or round-trip collection time is 30 minutes or less.",,WS_SRCE_H_BAS,Households with basic water service
+WSSRCEHIMP,Percentage of households whose main source of drinking water is an improved source,,WS_SRCE_H_IMP,Households using an improved water source
+WSSRCEHIOP,Percentage of households with an improved water source on the premises,,WS_SRCE_H_IOP,Households with improved water source on the premises
+WSSRCEHLTD,"Percentage of households with limited water service, defined as an improved water source with round-trip collection time greater than 30 minutes.",,WS_SRCE_H_LTD,Households with limited water service
+WSSRCEHTOT,Percentage of households: Total,,WS_SRCE_H_TOT,Households: Total
+WSSRCEPBAS,"Percentage of the de jure population living in households with basic water service, defined as an improved water source with either water on the premises or round-trip collection time is 30 minutes or less.",,WS_SRCE_P_BAS,Population living in households with basic water service
+WSSRCEPIMP,Percentage of the de jure population living in households whose main source of drinking water is an improved source,,WS_SRCE_P_IMP,Population living in households using an improved water source
+WSSRCEPIOP,Percentage of the de jure population living in households with an improved water source on the premises,,WS_SRCE_P_IOP,Population living in households with improved water source on the premises
+WSSRCEPLTD,"Percentage of the de jure population living in households with limited water service, defined as an improved water source with round-trip collection time greater than 30 minutes.",,WS_SRCE_P_LTD,Population living in households with limited water service
+WSSRCEPTOT,Percentage of the de jure population living in households: Total,,WS_SRCE_P_TOT,Population living in households: Total

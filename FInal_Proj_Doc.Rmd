@@ -1,0 +1,501 @@
+---
+title: "EPI 563 Final Project Documentation"
+author: "Cassandra Boutelle & Alisha Kalangara"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+here::i_am('Final_Proj_Doc.Rmd')
+knitr::opts_knit$set(root.dir=here::here())
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse, 
+               sf, 
+               spdep, 
+               DCluster, 
+               tmap,
+               kableExtra,
+               raster)
+```
+
+## Objective / Question
+* Is there spatial heterogeneity in improved water source access among households in Africa from 2011-2020?
+  + Does this spatial heterogeneity extend beyond political borders?
+* Can agricultural land ownership or wealth serve as potential contributors to these spatial patterns?
+  
+  
+## Data Source
+In order to answer our questions, we utilized data from Demographic and Health surveys which are conducted by USAID [(link)](http://spatialdata.dhsprogram.com/data/#/multiple/countries). These surveys are conducted approximately every 5 years in over 90 countries and focus on household data. 
+
+Surveys are conducted by stratifying a country into geographic regions which are as homogeneous as possible. Within each stratum, the primary sampling unit or cluster is usually census enumeration areas. Clusters do not have an equal probability of being selected, but rather have a probability relative to their population size within the stratum. Within each cluster, approximately 25-30 households are selected to be included in the sample. These households in a cluster all have equal opportunity to be selected. As such, for each household, the probability of being selected is the probability that their cluster is selected times the probability that their household is selected. Overall, this sampling scheme results in coverage of the target population and reduces sampling error.  
+
+Data taken from these surveys are weighted by normalized sample weights and most indicators are reported as percentages of households. Additionally, as part of the survey, the de jure population is noted. This refers to the number of people who usually reside in the household and had stayed the night previously. From this data, population measures for indicators can similarly be determined.  
+
+Concerning our data analysis, we initially downloaded data for all countries that had subnational level data, indiscriminate of continent. We downloaded the following indicators but only those indicated with asterisks (*) are of interest for this project.  
+```{r DATA DICTIONARY TABLE, echo=FALSE}
+#creates table
+dict = read.csv(here::here("DHS_Data", "data_dict.csv"))
+colnames(dict)<-c("DHS Label","Renamed Variable","Definition")
+kable(dict, caption = "Data Dictionary") %>% kable_styling()
+
+```
+  
+After having subsetted to African countries we saw that the number of households surveyed per country ranged from 3729 to 40427, with a median of 9685 households.
+
+```{r, eval=FALSE, include=FALSE}
+HHperCountry = africa %>%       #Need to run Indicator Data Preparation chunk prior
+               group_by(ISO) %>%
+               summarise(countr_hh = sum(num_HH))
+min(HHperCountry$countr_hh)
+max(HHperCountry$countr_hh)
+mean(HHperCountry$countr_hh)
+median(HHperCountry$countr_hh)
+```
+  
+We also downloaded African country boundary files to assist with mapping [(link)](https://www.arcgis.com/home/item.html?id=64aff05d66ff443caf9711fd988e21dd).
+  
+  
+## Data Preparation & Summarization
+
+```{r PACKAGES, eval = FALSE}
+# load necessary packages
+pacman::p_load(tidyverse, 
+               sf, 
+               spdep, 
+               DCluster, 
+               tmap,
+               kableExtra,
+               raster)
+```
+  
+### Loading & Subsetting Data  
+After loading packages, we initially subset to African countries and restrict the survey year to 2011-2020. This date range was selected so that extremely old survey data are not utilized, and that information from the past decade is captured. Additionally, upon mapping which countries were included, we also decided to exclude isolated countries (countries that had no contiguous neighbors with data). These included Madagascar, Egypt, Ethiopia, Comoros, and São Tomé and Príncipe. While exploring data, it was also found that some countries were missing measures for percent of the population that owns agricultural land. This was coded as 9999 but in cleaning the data we set these to NA.  
+```{r INDICATOR DATA PREPARATION, cache=TRUE, results='hide'}
+#load in the indicator data
+dat = st_read(here::here("DHS_Data/shps", "sdr_subnational_data.shp"))
+
+#lists of countries and survey years wanted
+country_list = c("DZ","AO","SH","BJ","BW","BF","BI","CM","CV","CF","TD","KM","CG","CD","DJ","EG","GQ","ER","SZ","ET","GA","GM","GH","GN","GW","CI","KE","LS","LR","LY","MG","MW","ML","MR","MU","YT","MA","MZ","NA","NE","NG","ST","SN","SC","SL","SO","ZA","SS","SH","SD","SZ","TZ","TG","TN","UG","CD","ZM","TZ","ZW")
+surv_year = c("2011","2012","2013","2014","2015","2016","2017","2018","2019","2020")
+
+#check for valid data, rename vars, subset to desired countries and survey years
+africa = dat %>%
+  filter(st_is_valid(dat)) %>%
+  rename(num_HH = HCCHARHNUM,
+         num_person = HCCHARPNUM,
+         basic_pop = WSSRCEPBAS,
+         improved_pop = WSSRCEPIMP,
+         onpremise_pop = WSSRCEPIOP,
+         limited_pop = WSSRCEPLTD,
+         basic_house = WSSRCEHBAS,
+         improved_house = WSSRCEHIMP,
+         onpremise_house = WSSRCEHIOP,
+         limited_house = WSSRCEHLTD,
+         tot_house = WSSRCEHTOT,
+         pop_in_hh = WSSRCEPTOT,
+         ag_land_house = HCAGONHLND,
+         low_w_q_pop = HCWIXQPLOW,
+         high_w_q_pop = HCWIXQPHGH) %>%
+  filter(ISO %in% country_list) %>%
+  filter(SVYYEAR %in% surv_year)
+
+# drop non-contiguous countries & unnecessary indicators, clean ag_land
+drop_list = c("MG","EG","ET", "KM", "ST")
+africa_drop <- africa %>% 
+              filter (!(ISO %in% drop_list)) %>% 
+              dplyr::select(improved_pop,improved_house, high_w_q_pop,ag_land_house)%>%
+              mutate_if(is.numeric, ~replace(., . == 9999, NA))
+```
+
+The downloaded boundary file, included an outlying French territory that we decided to exclude mapping because it was much further south than the rest of the continent. The territory was included with the South Africa polygon, so it wasn't possible to drop just the territory. As a result we cropped the outlines file.  
+```{r BOUNDARY FILE, results='hide', warning=FALSE}
+#load in country boundary file
+outlines = st_read(here::here("Africa_Outline","Export_Output_2.shp"))
+
+#get x and y geom coordinates, determine most extreme y coordinate, remove
+geomcoords <- as.data.frame(geom(as(outlines,"Spatial"))) %>% arrange(y)
+#looking at data, object 28 part 3 was the most extreme and likley is the island
+drop_gc2<-geomcoords[!(geomcoords$object=="28" & geomcoords$part=="3"),] 
+
+xlow = min(drop_gc2$x)
+ylow = min(drop_gc2$y)
+yhi = max(drop_gc2$y)
+xhi = max(drop_gc2$x)
+
+#crop outlines based on extreme x and y values
+outlines_crop<-st_crop(outlines, c(xmin= xlow, ymin = ylow, xmax = xhi, ymax = yhi))
+
+```
+  
+### Mapping Our Outcome  
+Among our indicators, we chose to map the percentage of the population that used an improved water source. We chose this indicator as one of the  Millennium Development Goals was to halve the population without access to improved water sources by 2015. While this goal has currently been met, a newer Sustainable Development Goal aims for everyone to have access to safely managed drinking water (improved water source).  
+
+To map the indicator we created breaks to show regions that had very low to high percentages of the population with access to an improved water source. As the millenium goal was centered around halving the number of people in need of access, we thought that setting the lowest threshold at 50% would show if this goal was met unilaterally across regions. Given the sustainable development goal, 100% is the desired upper threshold but this was lowered to 90% as there were very few regions with 100% use. We use a single hue sequential color palette to convey how darker colors means increased use.  
+```{r MAPPING}
+#mapping outcome
+Omap = tm_shape(outlines_crop)  +
+  tm_polygons(col = "grey") +
+  tm_shape(africa_drop) +
+  tm_fill("improved_pop", 
+          palette = "Blues",
+          title = '% of Population Using Improved \nWater Source',
+          style = 'fixed',
+          breaks = c(7.5,50,70,90,Inf),
+          labels = c("Very Low (7.5% - <50%)",
+                     "Low (50% - <70%)",
+                     "Medium (70% - <90%)",
+                     "High (90% +)")) +
+  tmap_options(check.and.fix = TRUE) +
+  tm_shape(outlines_crop) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_credits('*showing population level DHS data',
+    position = c('RIGHT', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_add_legend(type = "fill", labels = "NA", col = "grey") +
+  tm_layout(legend.position = c('LEFT', 'BOTTOM'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Improved Water Source Use in African DHS\nRegions 2011-2020',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+Omap
+```
+  
+In the map we see that there is spatial heterogeneity in improved water use. There are regions with less than 50% improved water use, and also regions with greater than 90% access. There are ares with similar levels of improved water use that span beyond political borders but it is not possible yet to determine whether these are significant clusters.
+  
+  
+## Analytic Methods  
+
+### Is there Clustering? Where?  
+Given the patterns seen in the map, we wanted to see if there is meaningful clustering.  
+  
+#### Global Moran's I
+We first create neighbors using k nearest neighbors where k was equal to 6. Since the unit of analysis was DHS regions, we felt that queen contiguity wouldn't be representative of neighbors as some regions are large while others are very small. To account for this we chose K nearest neighbors. We chose 6 because in general 5-6 neighbors is thought to be optimal.  
+```{r CREATE NEIGHBORS, cache =TRUE}
+#create K nearest neighbors list and neighbors object
+af_cent <- st_centroid(st_geometry(africa_drop))
+
+knn6 <- knearneigh(af_cent, k = 6)
+knn6_nb <- knn2nb(knn6, row.names = africa_drop$GEOID)
+
+knn6_lw <- knn6_nb%>%
+  nb2listw()
+```
+  
+```{r NEIGHBOR CONNECTEDNESS PLOT, include=FALSE}
+#only shows outlines for places we are including
+plot(st_geometry(africa_drop), border = 'grey', main = 'knn')
+plot.nb(knn6_nb, af_cent, point = F, add = T)
+```
+  
+Utilizing the neighbors list we are able to do a Global Moran's I to see if there is any clustering.
+```{r GLOBAL MORANS FOR OUTCOME, results='hide'}
+# global moran's
+gm <- moran.test(africa_drop$improved_pop,
+           listw = knn6_lw,
+           randomisation = TRUE)
+```
+
+```{r GLOBAL TEST, echo = FALSE}
+#create table for relevant output
+rownames <- c("Global Moran's I (KNN, k=6)")
+colnames <- c("Statistic", "p Value")
+
+gm_res <- matrix(c(formatC(gm$estimate[1], digits = 3, format = "f"),
+                   format(gm$p.value, scientific = TRUE, digits = 3)), 
+                 nrow=1, ncol=2,byrow=TRUE, dimnames = list(rownames,colnames))
+
+kable(gm_res, caption = "Results of Global Moran's I On Use of Improved Source") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+This value of the global moran's I does seem to suggest there is some spatial structure.
+```{r MORAN PLOT, include=FALSE}
+#Morans Plot showing regions that may be part of clusters
+moran.plot(x = africa_drop$improved_pop,
+           listw = knn6_lw,
+           labels = africa_drop$DHSREGEN,
+           xlab = "Observed rate",
+           ylab = "Spatially-lagged mean rate")
+```
+  
+#### LISA
+Since the global Moran's I statistic indicates that there is some spatial structure, in order to investigate where clustering is occurring we utilize LISA.  
+```{r LISA FOR OUTCOME, results ='hide'}
+# LISA
+local = localmoran(x = africa_drop$improved_pop,
+           listw = knn6_lw,
+           p.adjust.method = "fdr")
+summary(local)
+
+# Preparing for Mapping
+ #rename p value
+names(local)[5] <- "pval"
+
+ #create lagged local % with knn
+africa_drop$improved_pop_lag = lag.listw(knn6_lw, var = africa_drop$improved_pop)
+africa_drop$lm_pval = local[,5]
+
+ #new dataset with standardized and categorical values
+africa_lm <- africa_drop %>%
+  mutate(raw_std = as.numeric(scale(improved_pop)),
+         lag_std = as.numeric(scale(improved_pop_lag)),
+         lm_quad = factor(case_when(
+           raw_std >= 0 & lag_std >= 0 & lm_pval < 0.05 ~ 'High-High',
+            raw_std <= 0 & lag_std <= 0 & lm_pval < 0.05 ~ 'Low-Low',
+            raw_std <= 0 & lag_std >= 0 & lm_pval < 0.05 ~ 'Low-High',
+            raw_std >= 0 & lag_std <= 0 & lm_pval < 0.05 ~ 'High-Low',
+            lm_pval >= 0.05 ~ 'Non-significant'),
+           levels = c('High-High','Low-Low','Low-High','High-Low','Non-significant')))
+```
+
+```{r MAPPING CLUSTERS}
+# Mapping Clusters
+lisa_m <-tm_shape(outlines_crop) +
+  tm_polygons(col = "grey") +
+tm_shape(africa_lm) +
+  tm_fill("lm_quad",
+          style = "cat",
+          palette = c("#377EB8", "#E41A1C", "#984EA3", "#4DAF4A", "#ffffb3"),
+          title = "Cluster category") +
+  tm_shape(outlines_crop) +
+  tm_borders(lwd=1.5, col = 'black') +
+  tm_credits('*clusters determined using LISA',
+    position = c('RIGHT', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_add_legend(type = "fill", labels = "NA", col = "grey") +
+  tm_layout(legend.position = c('LEFT', 'BOTTOM'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Clustering of Improved Water Source Use in\nAfrican DHS Regions 2011-2020',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+
+lisa_m
+```
+  
+In this map we see that there are some high-high and low-low clusters. Though some clusters span across political boundaries, the majority remain within a country.  
+  
+### Why Might There Be Clustering?  
+Having seen significant clustering we wanted to consider what factors could contribute to this spatial pattern. Among the indicators available in the DHS survey, there was the percent of households that owned agricultural land and the percent of the population that are in the highest quintile of wealth in their respective country. 
+
+#### Mapping potential "exposures"  
+We first mapped these potential "exposures". Since these maps will be compared to the outcome and cluster map, we chose to utilize the same number of cutpoints as before. Hopefully, this will help to  compare across maps. We also use a single hue sequential color palettes for the same reason as before but in different colors so that it is clear the maps are showing different measures.  
+```{r HIGHEST QUINTILE MAP}
+# Mapping quintile map
+Wmap = tm_shape(outlines_crop)  +
+  tm_polygons(col = "grey") +
+  tm_shape(africa_drop) +
+  tm_fill("high_w_q_pop", 
+          palette = "Greens",
+          style = 'quantile',
+          n=4,
+          title = '% of Population in Highest Quintile\n of Wealth in Country',
+          labels = c( "0.2% - <6.4%",
+                     "6.4% - <11.4%",
+                     "11.4% - <21.1%",
+                     "21.1% +"))+
+  tmap_options(check.and.fix = TRUE) +
+  tm_shape(outlines_crop) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_credits('*showing population level DHS data\n ',
+    position = c('RIGHT', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_add_legend(type = "fill", labels = "NA", col = "grey") +
+  tm_layout(legend.position = c('LEFT', 'BOTTOM'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Wealth in African DHS Regions 2011-2020\n ',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+```
+  
+```{r AGRICULTURAL LAND USE MAP}
+# Mapping Agricultural map
+Ag_map = tm_shape(outlines_crop)  +
+  tm_polygons(col = "grey") +
+  tm_shape(africa_drop) +
+  tm_fill("ag_land_house", 
+          palette = "OrRd",
+          style="quantile",
+          n = 4,
+          title = '% of Households Owning \nAgricultural Land',
+          textNA = "NA",
+          labels = c( "0.80% - <48.7%",
+                     "48.7% - <66.0%",
+                     "66.0% - <79.3%",
+                     "79.3% +")) +
+  tmap_options(check.and.fix = TRUE) +
+  tm_shape(outlines_crop) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_credits('*showing household level DHS data\n some previously mapped regions are missing data',
+    position = c('RIGHT', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_layout(legend.position = c('LEFT', 'bottom'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Agricultural Land Ownership in African DHS\nRegions 2011-2020',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+```
+```{r COMPOSITE MAP, warning= FALSE, message=FALSE, fig.width=10}
+tmap_arrange(Omap,lisa_m,Wmap,Ag_map, ncol=2)                 
+```
+  
+We can see that our chosen exposures also have spatial heterogeneity. Comparing the two exposure maps with the improved water source map, there are no obvious similarities of spatial patterns. 
+  
+#### Moran's I for Linear Models  
+We conducted Moran's I tests for linear models to see if the percent of households that owned agricultural land and/or the percent of the population that are in the highest quintile of wealth explains the spatial clustering of improved water source use we found above.  
+  
+We evaluated these "exposures" separately, since the data were collected on different scales. The highest wealth quintile data is the percent of the region population, while the agricultural land ownership data is the percent of households in the region. Improved water source use was reported on both the population and household level, and to proper scale was used for each model.
+```{r LINEAR MODELS FOR WEALTH}
+#fit models
+W0 <- lm(improved_pop ~ 1, 
+         data = africa_drop) 
+
+W1 <- lm(improved_pop ~ high_w_q_pop, 
+         data = africa_drop)
+
+#retain residuals
+africa_drop$W0_resids <- W0$residuals
+africa_drop$W1_resids <- W1$residuals
+```
+
+```{r LINEAR MODELS FOR AGRICULTURE}
+#drop regions with NAs
+africa_drop2 <- africa_drop %>% filter(is.na(ag_land_house) == FALSE)
+
+#redefine neighbors
+af_cent2 <- st_centroid(st_geometry(africa_drop2))
+
+knn6_2 <- knearneigh(af_cent2, k = 6)
+knn6_nb_2 <- knn2nb(knn6_2, row.names = africa_drop2$GEOID)
+
+knn6_lw_2 <- knn6_nb_2%>%
+  nb2listw()
+
+#fit models
+A0 <- lm(improved_house ~ 1, 
+         data = africa_drop2)
+
+A1 <- lm(improved_house ~ ag_land_house, 
+         data = africa_drop2)
+
+#retain residuals
+africa_drop2$A0_resids <- A0$residuals
+africa_drop2$A1_resids <- A1$residuals
+```
+
+```{r COMPARING MAPPED RESIDUALS: WEALTH, warning=FALSE, message=FALSE}
+# mapping residuals for wealth models
+Wres_map <- tm_shape(outlines_crop)  +
+  tm_polygons(col = "grey") +
+  tm_shape(africa_drop) +
+  tm_fill(c('W0_resids', 'W1_resids'), 
+          palette = "RdYlBu",
+          style="quantile",
+          title = 'Residuals') +
+  tmap_options(check.and.fix = TRUE) +
+  tm_shape(outlines_crop) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_credits(c('*NULL MODEL\n*model uses population data','*FULL MODEL\n*model uses population data'),
+    position = c('right', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_layout(legend.position = c('LEFT', 'bottom'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Comparing Residuals Between Null and Full Models : Wealth',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+Wres_map
+```
+
+```{r COMPARING MAPPED RESIDUALS: AGRICULTURE, warning=FALSE, message=FALSE}
+# mapping residuals for ag_land models
+Ares_map <- tm_shape(outlines_crop)  +
+  tm_polygons(col = "grey") +
+  tm_shape(africa_drop2) +
+  tm_fill(c('A0_resids', 'A1_resids'), 
+          palette = "RdYlBu",
+          style="quantile",
+          title = 'Residuals') +
+  tmap_options(check.and.fix = TRUE) +
+  tm_shape(outlines_crop) + 
+  tm_borders(lwd = 1.5, col = "black") +
+  tm_credits(c('*NULL MODEL\n*model uses household data','*FULL MODEL\n*model uses household data'),
+    position = c('right', 'TOP'),
+    size = 0.5) +
+  tm_scale_bar(position = c('RIGHT', 'BOTTOM'),
+               color.dark = 'dark grey',
+               width= 0.2) +
+  tm_layout(legend.position = c('LEFT', 'bottom'),
+            inner.margins = c(0.01,0.01,0.01, 0.01),
+            main.title = 'Comparing Residuals Between Null and Full Models : Agricultural Land Ownership',
+            legend.title.size = 0.75,
+            legend.text.size = 0.6,
+            main.title.size = 1)
+Ares_map
+```
+
+```{r MORANS I FOR WEALTH, results = 'hide'}
+# run moran's I for residuals for wealth models
+null_wealth <-lm.morantest(W0, listw = knn6_lw)     
+wealth_results <-lm.morantest(W1, listw = knn6_lw)
+```
+
+```{r MORANS I FOR AGRICULTURE, results = 'hide'}
+# run moran's I for residuals for agriculture models
+null_ag <- lm.morantest(A0, listw = knn6_lw_2)
+ag_results <- lm.morantest(A1, listw = knn6_lw_2)
+```
+
+```{r MORANS I ON RESIDUALS TABLE PREP, include=FALSE }
+#create table for relevant output
+colnames_w <- c("Statistic", "p Value")
+rownames_w <- c("Null Model (KNN, k=6)", "Full Model (KNN, k=6)")
+
+wealth_tab <- matrix(c(formatC(null_wealth$estimate[1], digits = 3, format = "f"),
+                   format(null_wealth$p.value, scientific = TRUE, digits = 3),
+                   formatC(wealth_results$estimate[1], digits = 3, format = "f"),
+                   format(wealth_results$p.value, scientific = TRUE, digits = 3)), 
+                 nrow=2, ncol=2, byrow=TRUE, dimnames = list(rownames_w,colnames_w))
+ag_tab <- matrix(c(formatC(null_ag$estimate[1], digits = 3, format = "f"),
+                   format(null_ag$p.value, scientific = TRUE, digits = 3),
+                   formatC(ag_results$estimate[1], digits = 3, format = "f"),
+                   format(ag_results$p.value, scientific = TRUE, digits = 3)), 
+                 nrow=2, ncol=2, byrow=TRUE, dimnames = list(rownames_w,colnames_w))
+
+```
+
+```{r PRINT RESULTS TABLE, echo=FALSE}
+kable(wealth_tab, caption = "Results of Moran's I On Residuals of Wealth Related Models") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+kable(ag_tab, caption = "Results of Moran's I On Residuals of Agricultural Land Ownership Related Models") %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+Although results from the Moran's I on the residuals of our models show significant clustering of the residuals, we conclude that wealth and agricultural land ownership do not explain the spatial patterns of improved water source use. For wealth, the Moran's I statistic is not meaningfully reduced from the unconditional model to the conditional model. For agricultural land ownership, the Moran's I statistic for the conditional model is actually greater than the unconditional model (though not by much). These results do not necessarily mean that our exposure are not associated with improved water source use, just that they do not explain the clustering that we see.
+
+## Conclusions & Limitations  
+Our analysis shows that there is spatial clustering of improved water source usage in Africa. While some clusters span multiple countries, these are not expansive and many clusters are seen within countries. Further investigation into countries' policies about water quality standards or infrastructure may bring more insight to these patterns. The percent of the population in the highest wealth quintile and the percent of households that own agricultural land do not explain the spatial patterns of improved water source use. This does not necessarily mean that these exposures are not associated with improved water source use.  
+  
+We would have been interested to see the effect of wealth and agricultural land ownership together on the spatial pattern of improved water source use, however the DHS data provided these indicators on different levels (population vs household), making it not possible to use them in the same model.  
+  
+Consideration of other factors that may explain the spatial pattern would be interesting for future research. Other indicators from the DHS repository that could be of interest include employment status and electricity. Also, climate-related factors like average daily temperature or yearly rainfall could be considered in data are available. History of conflict or Non-Governmental Organization presence could also be interesting to investigate.  
+  

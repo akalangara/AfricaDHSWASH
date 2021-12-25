@@ -1,0 +1,16 @@
+﻿DHS Label,Renamed Variable,Definition
+*WSSRCEPLTD,limited_pop,"Percentage of the de jure population living in households with limited water service, defined as an improved water source with round-trip collection time greater than 30 minutes."
+*HCAGONHLND,ag_land_house,Percentage of households owning agricultural land
+*HCWIXQPHGH,high_w_q_pop,Percentage of the de jure population in the highest wealth quintile
+HCWIXQPLOW,low_w_q_pop,Percentage of the de jure population in the lowest wealth quintile
+WSSRCEHBAS,basic_house,"Percentage of households with basic water service, defined as an improved water source with either water on the premises or round-trip collection time is 30 minutes or less."
+WSSRCEHIMP,improved_house,Percentage of households whose main source of drinking water is an improved source
+WSSRCEHIOP,onpremise_house,Percentage of households with an improved water source on the premises
+WSSRCEHLTD,limited_house,"Percentage of households with limited water service, defined as an improved water source with round-trip collection time greater than 30 minutes."
+WSSRCEHTOT,tot_house,Percentage of households: Total
+WSSRCEPBAS,basic_pop,"Percentage of the de jure population living in households with basic water service, defined as an improved water source with either water on the premises or round-trip collection time is 30 minutes or less."
+WSSRCEPIMP,improved_pop,Percentage of the de jure population living in households whose main source of drinking water is an improved source
+WSSRCEPIOP,onpremise_pop,Percentage of the de jure population living in households with an improved water source on the premises
+WSSRCEPTOT,pop_in_hh,Percentage of the de jure population living in households: Total
+HCCHARHNUM,num_HH,Number of households
+HCCHARPNUM,num_person,Number of persons
